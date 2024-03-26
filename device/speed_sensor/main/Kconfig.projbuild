@@ -1,0 +1,21 @@
+menu "Speed Sensor Configuration"
+
+config WIFI_SSID
+    string "WiFi network SSID"
+    default ""
+    help
+        WiFi network SSID.
+
+config WIFI_PASSWORD
+    string "WiFi network password"
+    default ""
+    help
+        WiFi network password.
+
+config FIRMWARE_UPGRADE_URL
+    string "Fimware upgrade HTTPS url"
+    default "https://172.20.10.10:8443/firmware.bin"
+    help
+        Fimware upgrade HTTPS url.
+
+endmenu
