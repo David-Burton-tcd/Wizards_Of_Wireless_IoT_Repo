@@ -22,6 +22,12 @@
 #include "esp_https_ota.h"
 #include "esp_crt_bundle.h"
 #include "sdkconfig.h"
+#include "esp_bt.h"
+#include "esp_gap_ble_api.h"
+#include "esp_gattc_api.h"
+#include "esp_gatt_defs.h"
+#include "esp_bt_main.h"
+#include "esp_bt_defs.h"
 
 
 char *MQTT_DEVICE_UPGRADE_TOPIC = "/device/upgrade";
@@ -35,6 +41,8 @@ const char *mqtt_broker_pass = CONFIG_MQTT_BROKER_PASSWORD;
 static const char *MQTT_TAG = "MQTT";
 static const char *HTTP_TAG = "HTTP";
 
+// Global MQTT client handle
+esp_mqtt_client_handle_t mqtt_client = NULL;
 
 typedef struct {
     float speed; // Speed in km/h
@@ -152,6 +160,21 @@ void upgrade_firmware_task(void *pvParameters) {
 }
 
 
+void sensor_data_send_task(void *pvParameters) {
+    // sends dummy sensor data every 5 seconds
+    while (true) {
+        // print_current_time();
+		car_readings current_sample = random_sensor_readings();
+		char* mqtt_message = malloc(100 * sizeof(char));
+
+		sprintf(mqtt_message, "{\"device\": \"sensor_1\", \"data\": {\"speed\": \"%.2f\", \"length\": \"%.2f\"}}", current_sample.speed, current_sample.length);
+
+		esp_mqtt_client_publish(mqtt_client, "/device/data", mqtt_message, 0, 0, true);
+		vTaskDelay(5000 /portTICK_PERIOD_MS);
+	}
+}
+
+
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
     ESP_LOGD(MQTT_TAG, "Event dispatched from event loop base=%s, event_id=%" PRIi32 "", base, event_id);
@@ -208,32 +231,75 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 }
 
 
+static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
+{
+    esp_err_t err;
+
+    switch (event) {
+        case ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT: {
+            esp_ble_gap_start_advertising(&ble_adv_params);
+        }
+        break;
+
+        case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
+            //adv start complete event to indicate adv start successfully or failed
+            if ((err = param->adv_start_cmpl.status) != ESP_BT_STATUS_SUCCESS) {
+                ESP_LOGE("BLE", "Adv start failed: %s", esp_err_to_name(err));
+            }
+        break;
+
+        case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
+            if ((err = param->adv_stop_cmpl.status) != ESP_BT_STATUS_SUCCESS){
+                ESP_LOGE("BLE", "Adv stop failed: %s", esp_err_to_name(err));
+            }
+            else {
+                ESP_LOGI("BLE", "Stop adv successfully");
+            }
+        break;
+
+        default:
+        break;
+    }
+}
+
+
 void app_main(void)
 {
-	nvs_flash_init();
+	esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    initialize_ble(esp_gap_cb);
+    ESP_LOGI("BLE", "Configuring payload");
+    uint8_t hello_message[] = {
+        /*-- device name --*/
+        0x0b, // length of type and device name(11)
+        0x09, // device name type (1)
+        'S','p','e','e','d',' ','B','u','m','p', // Device name (10)
+        0x05, // length of custom data
+        0xff, // custom type
+        0x00,0x00,0x00,0x00
+    };
+
+    esp_ble_gap_config_adv_data_raw(hello_message, sizeof(hello_message));
+
 	initialize_wifi(wifi_ssid, wifi_pass, wifi_event_handler);
 	
-	ESP_LOGI("MAIN", "20s delay to connect to Wifi.");
-	vTaskDelay(20000 /portTICK_PERIOD_MS);
+	ESP_LOGI("MAIN", "5s delay to connect to Wifi.");
+	vTaskDelay(5000 /portTICK_PERIOD_MS);
 
     initialize_sntp();
     wait_for_time_sync();
 	
-	esp_mqtt_client_handle_t mqtt_client = initialize_mqtt(
+	mqtt_client = initialize_mqtt(
 		mqtt_broker_uri,
 		mqtt_broker_user,
 		mqtt_broker_pass,
 		mqtt_event_handler
 	);
 
-	while (true) {
-        print_current_time();
-		car_readings current_sample = random_sensor_readings();
-		char* mqtt_message = malloc(100 * sizeof(char));
-
-		sprintf(mqtt_message, "{\"device\": \"sensor_1\", \"data\": {\"speed\": \"%.2f\", \"length\": \"%.2f\"}}", current_sample.speed, current_sample.length);
-
-		esp_mqtt_client_publish(mqtt_client, "/device/data", mqtt_message, 0, 0, true);
-		vTaskDelay(5000 /portTICK_PERIOD_MS);
-	}
+    xTaskCreate(&sensor_data_send_task, "sensor_data_task", 2048, NULL, 5, NULL);
 }

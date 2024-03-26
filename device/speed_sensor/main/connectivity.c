@@ -7,7 +7,17 @@
 #include "esp_log.h"
 #include "lwip/apps/sntp.h"
 
+#include "esp_bt.h"
+#include "esp_gap_ble_api.h"
+#include "esp_gattc_api.h"
+#include "esp_gatt_defs.h"
+#include "esp_bt_main.h"
+#include "esp_bt_defs.h"
+
 #include "freertos/FreeRTOS.h"
+
+#include "esp_bt_main.h"
+
 
 
 void initialize_wifi(const char *ssid, const char *pass, esp_event_handler_t wifi_event_handler)
@@ -58,14 +68,14 @@ esp_mqtt_client_handle_t initialize_mqtt(const char *uri, const char *user, cons
 
 void initialize_sntp(void) {
     ESP_LOGI("SNTP", "Initializing SNTP");
-    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
 
     // Set the server by name
     // The server can be "pool.ntp.org", "time.nist.gov", or any other NTP server
-    sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_setservername(0, "pool.ntp.org");
 
     // This function initializes the SNTP service.
-    sntp_init();
+    esp_sntp_init();
 }
 
 
@@ -86,6 +96,7 @@ void wait_for_time_sync(void) {
     }
 }
 
+
 void print_current_time() {
 	// Retrieve current time
 	time_t now = time(NULL);
@@ -102,4 +113,23 @@ void print_current_time() {
 	// Print the formatted time
 	printf("Current time: %s\n", time_str);
 	vTaskDelay(5000 /portTICK_PERIOD_MS);
+}
+
+
+void initialize_ble(esp_gap_ble_cb_t esp_gap_cb) {
+	esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+    esp_bt_controller_init(&bt_cfg);
+    esp_bt_controller_enable(ESP_BT_MODE_BLE);
+
+    esp_bluedroid_init();
+    esp_bluedroid_enable();
+    
+    esp_err_t status;
+    ESP_LOGI("BLE", "register callback");
+    //register the scan callback function to the gap module
+    if ((status = esp_ble_gap_register_callback(esp_gap_cb)) != ESP_OK) {
+        ESP_LOGE("BLE", "gap register error: %s", esp_err_to_name(status));
+        return;
+    }
+
 }
