@@ -1,2 +1,4 @@
 idf_component_register(SRCS "main.c"
-                    INCLUDE_DIRS ".")
+                            "connectivity.c"
+                    INCLUDE_DIRS "."
+                    EMBED_TXTFILES ${project_dir}/certificates/cert.pem)
