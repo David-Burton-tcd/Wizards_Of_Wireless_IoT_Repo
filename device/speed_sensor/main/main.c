@@ -25,9 +25,12 @@
 
 char *MQTT_DEVICE_UPGRADE_TOPIC = "/device/upgrade";
 char *MQTT_BUMP_CONTROLLER_TOPIC = "/device/bump";
-const char *ssid = CONFIG_WIFI_SSID;
-const char *pass = CONFIG_WIFI_PASSWORD;
+const char *wifi_ssid = CONFIG_WIFI_SSID;
+const char *wifi_pass = CONFIG_WIFI_PASSWORD;
 const char *firmware_url = CONFIG_FIRMWARE_UPGRADE_URL;
+const char *mqtt_broker_uri = CONFIG_MQTT_BROKER_URI;
+const char *mqtt_broker_user = CONFIG_MQTT_BROKER_USER;
+const char *mqtt_broker_pass = CONFIG_MQTT_BROKER_PASSWORD;
 static const char *MQTT_TAG = "MQTT";
 static const char *HTTP_TAG = "HTTP";
 
@@ -207,15 +210,15 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 void app_main(void)
 {
 	nvs_flash_init();
-	initialize_wifi(ssid, pass, wifi_event_handler);
+	initialize_wifi(wifi_ssid, wifi_pass, wifi_event_handler);
 	
 	ESP_LOGI("MAIN", "5s delay to connect to Wifi.");
 	vTaskDelay(5000 /portTICK_PERIOD_MS);
 	
 	esp_mqtt_client_handle_t mqtt_client = initialize_mqtt(
-		"mqtt://172.20.10.10",
-		"tclient",
-		"mqtttest",
+		mqtt_broker_uri,
+		mqtt_broker_user,
+		mqtt_broker_pass,
 		mqtt_event_handler
 	);
 

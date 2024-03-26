@@ -14,8 +14,26 @@ config WIFI_PASSWORD
 
 config FIRMWARE_UPGRADE_URL
     string "Fimware upgrade HTTPS url"
-    default "https://172.20.10.10:8443/firmware.bin"
+    default "https://34.89.91.208:8443/hello-world.bin"
     help
         Fimware upgrade HTTPS url.
+
+config MQTT_BROKER_URI
+    string "MQTT SSL broker uri"
+    default "mqtts://34.89.91.208:8883"
+    help
+        MQTT SSL broker uri.
+
+config MQTT_BROKER_USER
+    string "MQTT SSL user"
+    default ""
+    help
+        MQTT SSL user.
+
+config MQTT_BROKER_PASSWORD
+    string "MQTT SSL user password"
+    default ""
+    help
+        MQTT SSL user password.
 
 endmenu

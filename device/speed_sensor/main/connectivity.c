@@ -1,5 +1,6 @@
 #include "esp_wifi.h"
 #include "mqtt_client.h"
+#include "esp_crt_bundle.h"
 
 
 void initialize_wifi(const char *ssid, const char *pass, esp_event_handler_t wifi_event_handler)
@@ -26,20 +27,20 @@ void initialize_wifi(const char *ssid, const char *pass, esp_event_handler_t wif
 	esp_wifi_start();
 	esp_wifi_set_mode(WIFI_MODE_STA);
 	esp_wifi_connect();
-	printf( "wifi_init_softap finished. SSID:%s  password:%s", ssid, pass);
+	printf( "wifi_init_softap finished. SSID:%s  password:%s\n", ssid, pass);
 }
 
 
 esp_mqtt_client_handle_t initialize_mqtt(const char *uri, const char *user, const char *password, esp_event_handler_t mqtt_event_handler)
 {
 	esp_mqtt_client_config_t mqtt_cfg = {
-        // .broker.address.uri = "mqtt://172.20.10.10",
-		// .credentials.username = "tclient",
-		// .credentials.authentication.password = "mqtttest"
         .broker.address.uri = uri,
+		.broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
 		.credentials.username = user,
-		.credentials.authentication.password = password
+		.credentials.authentication.password = password,
+		.broker.verification.skip_cert_common_name_check = true
 	};
+
 	esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg); //sending struct as a parameter in init client function
 	esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
     esp_mqtt_client_start(client);
