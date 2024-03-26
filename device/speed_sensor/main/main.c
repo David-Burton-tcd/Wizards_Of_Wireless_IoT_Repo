@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -212,8 +213,11 @@ void app_main(void)
 	nvs_flash_init();
 	initialize_wifi(wifi_ssid, wifi_pass, wifi_event_handler);
 	
-	ESP_LOGI("MAIN", "5s delay to connect to Wifi.");
-	vTaskDelay(5000 /portTICK_PERIOD_MS);
+	ESP_LOGI("MAIN", "20s delay to connect to Wifi.");
+	vTaskDelay(20000 /portTICK_PERIOD_MS);
+
+    initialize_sntp();
+    wait_for_time_sync();
 	
 	esp_mqtt_client_handle_t mqtt_client = initialize_mqtt(
 		mqtt_broker_uri,
@@ -223,6 +227,7 @@ void app_main(void)
 	);
 
 	while (true) {
+        print_current_time();
 		car_readings current_sample = random_sensor_readings();
 		char* mqtt_message = malloc(100 * sizeof(char));
 

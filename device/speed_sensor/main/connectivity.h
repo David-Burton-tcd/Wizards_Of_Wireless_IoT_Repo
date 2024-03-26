@@ -8,4 +8,10 @@ void initialize_wifi(const char *ssid, const char *pass, esp_event_handler_t wif
 esp_mqtt_client_handle_t initialize_mqtt(const char *uri, const char *user, const char *password, esp_event_handler_t mqtt_event_handler);
 
 
-void upgrade_firmware_task(void *pvParameters);
+void initialize_sntp(void);
+
+
+void wait_for_time_sync(void);
+
+
+void print_current_time();
