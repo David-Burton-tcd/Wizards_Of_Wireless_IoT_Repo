@@ -14,6 +14,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/mcpwm_prelude.h"
+#include <semaphore.h> 
 
 
 #define SERVO_MIN_PULSEWIDTH_US 500  // Minimum pulse width in microsecond
@@ -25,6 +26,7 @@
 #define SERVO_TIMEBASE_RESOLUTION_HZ 1000000  // 1MHz, 1us per tick
 #define SERVO_TIMEBASE_PERIOD        20000    // 20000 ticks, 20ms
 static mcpwm_cmpr_handle_t comparator = NULL;
+sem_t mutex_motor; 
 
 
 static const char* DEMO_TAG = "IBEACON_DEMO";
@@ -93,10 +95,13 @@ static void setup_servo()
     ESP_LOGI(DEMO_TAG, "Enable and start timer");
     ESP_ERROR_CHECK(mcpwm_timer_enable(timer));
     ESP_ERROR_CHECK(mcpwm_timer_start_stop(timer, MCPWM_TIMER_START_NO_STOP));
+
+    deactivate_speed_bump();
 }
 
 static void activate_speed_bump()
 {
+    sem_wait(&mutex_motor); 
     int angle = 0;
     int step = 1;
     while (!((angle + step) > 180)) {
@@ -106,10 +111,12 @@ static void activate_speed_bump()
         vTaskDelay(pdMS_TO_TICKS(1));
         angle += step;
     }
+    sem_post(&mutex_motor); 
 }
 
 static void deactivate_speed_bump() 
 {
+    sem_wait(&mutex_motor); 
     int angle = 180;
     int step = -1;
     while (!((angle + step) < 0)) {
@@ -119,6 +126,7 @@ static void deactivate_speed_bump()
         vTaskDelay(pdMS_TO_TICKS(1));
         angle += step;
     }
+    sem_post(&mutex_motor); 
 }
 
 static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
