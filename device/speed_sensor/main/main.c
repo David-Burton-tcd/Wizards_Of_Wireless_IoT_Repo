@@ -262,6 +262,55 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
     }
 }
 
+static void advertise_idle()
+{
+    uint8_t idle_message[] = {
+        /*-- device name --*/
+        0x0b, // length of type and device name(11)
+        0x09, // device name type (1)
+        'S','p','e','e','d',' ','B','u','m','p', // Device name (10)
+        0x05, // length of custom data
+        0xff, // custom type
+        0x00,0x00,0x00,0x00
+    };
+    esp_ble_gap_config_adv_data_raw(idle_message, sizeof(hello_message));
+    ESP_LOGI("BLE", "Advertise idle");
+}
+
+static void advertise_deploy_speed_bump()
+{
+    uint8_t deploy_message[] = {
+    /*-- device name --*/
+    0x0b, // length of type and device name(11)
+    0x09, // device name type (1)
+    'S','p','e','e','d',' ','B','u','m','p', // Device name (10)
+    0x05, // length of custom data
+    0xff, // custom type
+    0x00,0x00,0x00,0x01
+    };
+    esp_ble_gap_config_adv_data_raw(deploy_message, sizeof(hello_message));
+    ESP_LOGI("BLE", "Advertise deploy");
+    vTaskDelay(2000 /portTICK_PERIOD_MS);
+    advertise_idle();
+}
+
+static void advertise_retract_speed_bump()
+{
+    uint8_t retract_message[] = {
+    /*-- device name --*/
+    0x0b, // length of type and device name(11)
+    0x09, // device name type (1)
+    'S','p','e','e','d',' ','B','u','m','p', // Device name (10)
+    0x05, // length of custom data
+    0xff, // custom type
+    0x00,0x00,0x00,0x02
+    };
+    esp_ble_gap_config_adv_data_raw(retract_message, sizeof(hello_message));
+    ESP_LOGI("BLE", "Advertise retract");
+    vTaskDelay(2000 /portTICK_PERIOD_MS);
+    advertise_idle();
+}
+
 
 void app_main(void)
 {
@@ -274,17 +323,7 @@ void app_main(void)
 
     initialize_ble(esp_gap_cb);
     ESP_LOGI("BLE", "Configuring payload");
-    uint8_t hello_message[] = {
-        /*-- device name --*/
-        0x0b, // length of type and device name(11)
-        0x09, // device name type (1)
-        'S','p','e','e','d',' ','B','u','m','p', // Device name (10)
-        0x05, // length of custom data
-        0xff, // custom type
-        0x00,0x00,0x00,0x00
-    };
-
-    esp_ble_gap_config_adv_data_raw(hello_message, sizeof(hello_message));
+    advertise_idle();
 
 	initialize_wifi(wifi_ssid, wifi_pass, wifi_event_handler);
 	
