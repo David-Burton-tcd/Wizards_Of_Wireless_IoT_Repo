@@ -15,6 +15,7 @@
 #include "freertos/task.h"
 #include "driver/mcpwm_prelude.h"
 #include <semaphore.h> 
+#include "esp_time.h"
 
 
 #define SERVO_MIN_PULSEWIDTH_US 500  // Minimum pulse width in microsecond
@@ -25,8 +26,9 @@
 #define SERVO_PULSE_GPIO             26        // GPIO connects to the PWM signal line
 #define SERVO_TIMEBASE_RESOLUTION_HZ 1000000  // 1MHz, 1us per tick
 #define SERVO_TIMEBASE_PERIOD        20000    // 20000 ticks, 20ms
+#define DEPLOYMENT_STATE_CHANGE_MIN_DELAY 5
 static mcpwm_cmpr_handle_t comparator = NULL;
-sem_t mutex_motor; 
+//sem_t mutex_motor; 
 
 
 static const char* DEMO_TAG = "IBEACON_DEMO";
@@ -44,6 +46,52 @@ static esp_ble_scan_params_t ble_scan_params = {
 static inline uint32_t example_angle_to_compare(int angle)
 {
     return (angle - SERVO_MIN_DEGREE) * (SERVO_MAX_PULSEWIDTH_US - SERVO_MIN_PULSEWIDTH_US) / (SERVO_MAX_DEGREE - SERVO_MIN_DEGREE) + SERVO_MIN_PULSEWIDTH_US;
+}
+
+static bool is_deployed = false;
+static int last_bump_change = 0;
+
+static void deactivate_speed_bump(bool isBySignal) 
+{
+    int current_tick_count = xTaskGetTickCount();
+    if(is_deployed && current_tick_count - last_bump_change > DEPLOYMENT_STATE_CHANGE_MIN_DELAY){
+        int angle = 180;
+        int step = -1;
+        while (!((angle + step) < 0)) {
+            ESP_LOGI(DEMO_TAG, "Angle of rotation: %d", angle);
+            ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, example_angle_to_compare(angle)));
+            //Add delay, since it takes time for servo to rotate, usually 200ms/60degree rotation under 5V power supply
+            vTaskDelay(pdMS_TO_TICKS(1));
+            angle += step;
+        }
+        is_deployed = false;
+    }
+    if(isBySignal) {
+        last_bump_change = xTaskGetTickCount();
+    }
+}
+
+static void deactivate_speed_bump_automatic() {
+    deactivate_speed_bump(false);
+}
+
+static void activate_speed_bump()
+{
+    int current_tick_count = xTaskGetTickCount();
+    if(!is_deployed && current_tick_count - last_bump_change > DEPLOYMENT_STATE_CHANGE_MIN_DELAY) {
+        int angle = 0;
+        int step = 1;
+        while (!((angle + step) > 180)) {
+            ESP_LOGI(DEMO_TAG, "Angle of rotation: %d", angle);
+            ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, example_angle_to_compare(angle)));
+            //Add delay, since it takes time for servo to rotate, usually 200ms/60degree rotation under 5V power supply
+            vTaskDelay(pdMS_TO_TICKS(1));
+            angle += step;
+        }
+        is_deployed = true;
+        xTaskCreate(&deactivate_speed_bump_automatic, "undeploy_speed_bump_task", 2048, NULL, 5, NULL);
+    }
+    last_bump_change = xTaskGetIntCount();
 }
 
 static void setup_servo() 
@@ -96,37 +144,7 @@ static void setup_servo()
     ESP_ERROR_CHECK(mcpwm_timer_enable(timer));
     ESP_ERROR_CHECK(mcpwm_timer_start_stop(timer, MCPWM_TIMER_START_NO_STOP));
 
-    deactivate_speed_bump();
-}
-
-static void activate_speed_bump()
-{
-    sem_wait(&mutex_motor); 
-    int angle = 0;
-    int step = 1;
-    while (!((angle + step) > 180)) {
-        ESP_LOGI(DEMO_TAG, "Angle of rotation: %d", angle);
-        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, example_angle_to_compare(angle)));
-        //Add delay, since it takes time for servo to rotate, usually 200ms/60degree rotation under 5V power supply
-        vTaskDelay(pdMS_TO_TICKS(1));
-        angle += step;
-    }
-    sem_post(&mutex_motor); 
-}
-
-static void deactivate_speed_bump() 
-{
-    sem_wait(&mutex_motor); 
-    int angle = 180;
-    int step = -1;
-    while (!((angle + step) < 0)) {
-        ESP_LOGI(DEMO_TAG, "Angle of rotation: %d", angle);
-        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, example_angle_to_compare(angle)));
-        //Add delay, since it takes time for servo to rotate, usually 200ms/60degree rotation under 5V power supply
-        vTaskDelay(pdMS_TO_TICKS(1));
-        angle += step;
-    }
-    sem_post(&mutex_motor); 
+    deactivate_speed_bump(false);
 }
 
 static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
@@ -178,7 +196,7 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
                             if(adv_data[17] == 0x01) {
                                 activate_speed_bump();
                             } else if (adv_data[17] == 0x02) {
-                                deactivate_speed_bump();
+                                deactivate_speed_bump(true);
                             }
                         }
                     }
