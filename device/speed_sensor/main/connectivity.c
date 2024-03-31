@@ -6,7 +6,6 @@
 
 #include "esp_sntp.h"
 #include "esp_log.h"
-#include "lwip/apps/sntp.h"
 
 #include "esp_bt.h"
 #include "esp_gap_ble_api.h"
@@ -83,7 +82,7 @@ void initialize_sntp(void) {
 void wait_for_time_sync(void) {
     // Wait for time to be set
     int retry = 0;
-    const int retry_count = 10; // Maximum retries
+    const int retry_count = 30; // Maximum retries
     while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && ++retry < retry_count) {
         ESP_LOGI("SNTP", "Waiting for system time to be set... (%d/%d)", retry, retry_count);
         vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -133,4 +132,56 @@ void initialize_ble(esp_gap_ble_cb_t esp_gap_cb) {
         return;
     }
 
+}
+
+
+void advertise_idle()
+{
+    uint8_t idle_message[] = {
+        /*-- device name --*/
+        0x0b, // length of type and device name(11)
+        0x09, // device name type (1)
+        'S','p','e','e','d',' ','B','u','m','p', // Device name (10)
+        0x05, // length of custom data
+        0xff, // custom type
+        0x00,0x00,0x00,0x00
+    };
+    esp_ble_gap_config_adv_data_raw(idle_message, sizeof(idle_message));
+    ESP_LOGI("BLE", "Advertise idle");
+}
+
+
+void advertise_deploy_speed_bump()
+{
+    uint8_t deploy_message[] = {
+    /*-- device name --*/
+    0x0b, // length of type and device name(11)
+    0x09, // device name type (1)
+    'S','p','e','e','d',' ','B','u','m','p', // Device name (10)
+    0x05, // length of custom data
+    0xff, // custom type
+    0x00,0x00,0x00,0x01
+    };
+    esp_ble_gap_config_adv_data_raw(deploy_message, sizeof(deploy_message));
+    ESP_LOGI("BLE", "Advertise deploy");
+    vTaskDelay(2000 /portTICK_PERIOD_MS);
+    advertise_idle();
+}
+
+
+void advertise_retract_speed_bump()
+{
+    uint8_t retract_message[] = {
+    /*-- device name --*/
+    0x0b, // length of type and device name(11)
+    0x09, // device name type (1)
+    'S','p','e','e','d',' ','B','u','m','p', // Device name (10)
+    0x05, // length of custom data
+    0xff, // custom type
+    0x00,0x00,0x00,0x02
+    };
+    esp_ble_gap_config_adv_data_raw(retract_message, sizeof(retract_message));
+    ESP_LOGI("BLE", "Advertise retract");
+    vTaskDelay(2000 /portTICK_PERIOD_MS);
+    advertise_idle();
 }

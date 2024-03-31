@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <time.h>
 
@@ -29,6 +30,12 @@
 #include "esp_bt_main.h"
 #include "esp_bt_defs.h"
 
+#include "esp_timer.h"
+
+#include <ultrasonic.h>
+#include <esp_err.h>
+
+#define MAX_SAMPLES 100
 
 char *MQTT_DEVICE_UPGRADE_TOPIC = "/device/upgrade";
 char *MQTT_BUMP_CONTROLLER_TOPIC = "/device/bump";
@@ -41,27 +48,33 @@ const char *mqtt_broker_pass = CONFIG_MQTT_BROKER_PASSWORD;
 static const char *MQTT_TAG = "MQTT";
 static const char *HTTP_TAG = "HTTP";
 
+#define MAX_DISTANCE_CM 60 // 5m max
+#define SENSOR_DISTANCE_CM 10 // Distance between sensors in cm
+
+#define TRIGGER_GPIO_1 5
+#define ECHO_GPIO_1 18
+
+#define TRIGGER_GPIO_2 19 // Example GPIO for second sensor
+#define ECHO_GPIO_2 21   // Example GPIO for second sensor
+
 // Global MQTT client handle
 esp_mqtt_client_handle_t mqtt_client = NULL;
 
-typedef struct {
-    float speed; // Speed in km/h
-    float length; // Length in meters
-} car_readings;
+float speed_samples[MAX_SAMPLES];
+int sample_count = 0;
+bool sensor_1_up = true;
+bool sensor_2_up = true;
+
+
+void add_speed_sample(float speed) {
+    if (sample_count < MAX_SAMPLES) {
+        speed_samples[sample_count++] = speed;
+    }
+}
 
 
 float generate_random_float(float min, float max) {
     return min + ((float)rand() / RAND_MAX) * (max - min);
-}
-
-
-static car_readings random_sensor_readings() {
-	car_readings sample;
-
-	sample.speed = generate_random_float(0.0, 200.0);
-    sample.length = generate_random_float(3.0, 5.0);
-
-    return sample;
 }
 
 
@@ -160,18 +173,37 @@ void upgrade_firmware_task(void *pvParameters) {
 }
 
 
-void sensor_data_send_task(void *pvParameters) {
-    // sends dummy sensor data every 5 seconds
+void analyze_samples_send_over_mqtt() {
     while (true) {
-        // print_current_time();
-		car_readings current_sample = random_sensor_readings();
-		char* mqtt_message = malloc(100 * sizeof(char));
+        vTaskDelay(pdMS_TO_TICKS(5000)); // Wait for 5 seconds
 
-		sprintf(mqtt_message, "{\"device\": \"sensor_1\", \"data\": {\"speed\": \"%.2f\", \"length\": \"%.2f\"}}", current_sample.speed, current_sample.length);
+        float max_speed = 0;
+        float min_speed = 0;
+        float sum_speed = 0;
+        float average_speed = 0;
 
-		esp_mqtt_client_publish(mqtt_client, "/device/data", mqtt_message, 0, 0, true);
-		vTaskDelay(5000 /portTICK_PERIOD_MS);
-	}
+        if (sample_count > 0) {
+            max_speed = speed_samples[0];
+            min_speed = speed_samples[0];
+            sum_speed = 0;
+            for (int i = 0; i < sample_count; i++) {
+                if (speed_samples[i] > max_speed) max_speed = speed_samples[i];
+                if (speed_samples[i] < min_speed) min_speed = speed_samples[i];
+                sum_speed += speed_samples[i];
+            }
+            average_speed = sum_speed / sample_count;
+        }
+
+        char* mqtt_message = malloc(250 * sizeof(char));
+        sprintf(mqtt_message, "{\"device\": \"sensor_1\", \"data\": {\"avg_speed\": \"%.2f\", \"max_speed\": \"%.2f\", \"min_speed\": \"%.2f\", \"num_cars\": \"%d\", \"sensor_1_up\": \"%d\", \"sensor_2_up\": \"%d\"}}", average_speed, max_speed, min_speed, sample_count, sensor_1_up, sensor_2_up);
+        esp_mqtt_client_publish(mqtt_client, "/device/data", mqtt_message, 0, 0, true);
+        ESP_LOGI("ANALYZE", "Max Speed: %0.02f cm/s, Min Speed: %0.02f cm/s, Average Speed: %0.02f cm/s, Total Cars: %d", max_speed, min_speed, average_speed, sample_count);
+
+        // Reset the list
+        sample_count = 0;
+        sensor_1_up = true;
+        sensor_2_up = true;
+    }
 }
 
 
@@ -263,6 +295,78 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
 }
 
 
+void ultrasonic_sensor_data()
+{
+    ultrasonic_sensor_t sensor1 = {
+        .trigger_pin = TRIGGER_GPIO_1,
+        .echo_pin = ECHO_GPIO_1
+    };
+
+    ultrasonic_sensor_t sensor2 = {
+        .trigger_pin = TRIGGER_GPIO_2,
+        .echo_pin = ECHO_GPIO_2
+    };
+
+    ultrasonic_init(&sensor1);
+    ultrasonic_init(&sensor2);
+
+    TickType_t start_time = 0;
+
+    while (true)
+    {
+        float distance1, distance2;
+        esp_err_t res1 = ultrasonic_measure(&sensor1, MAX_DISTANCE_CM, &distance1);
+        esp_err_t res2 = ultrasonic_measure(&sensor2, MAX_DISTANCE_CM, &distance2);
+
+        if (res1 != ESP_OK)
+        {
+            // printf("Error on Sensor 1: %d: ", res1);
+            sensor_1_up = false;
+            // Handle errors for sensor 1
+        }
+        else if (distance1 * 100 < MAX_DISTANCE_CM)
+        {
+            start_time = xTaskGetTickCount();
+            printf("Distance from Sensor 1: %0.04f cm\n", distance1 * 100);
+        }
+
+        if (res2 != ESP_OK)
+        {
+            // printf("Error on Sensor 2: %d: ", res2);
+            sensor_2_up = false;
+            // Handle errors for sensor 2
+            // Dummy data
+            float chance = generate_random_float(0, 100);
+            if (chance < 10) {
+                add_speed_sample(generate_random_float(0.0, 200.0));
+            }
+        }
+        else if (distance2 * 100 < MAX_DISTANCE_CM)
+        {
+            printf("Distance from Sensor 2: %0.04f cm\n", distance2 * 100);
+            if (start_time != 0) // If the timer was started
+            {
+                TickType_t end_time = xTaskGetTickCount(); // Get the current time
+                float time_taken = ((float)(end_time - start_time)) * portTICK_PERIOD_MS / 1000; // Calculate time taken in seconds
+                float speed = SENSOR_DISTANCE_CM / time_taken; // Calculate speed of passing car
+                printf("Speed of passing car: %0.02f cm/s\n", speed);
+                start_time = 0; // Reset the timer
+                add_speed_sample(speed);
+                if (speed > 50){
+                    ESP_LOGI("TAG", "%s", "Too fast");
+                    advertise_deploy_speed_bump();
+                }
+                else {  
+                    ESP_LOGI("TAG", "%s", "Too slow");
+                }
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+}
+
+
 void app_main(void)
 {
 	nvs_flash_init();
@@ -276,17 +380,7 @@ void app_main(void)
 
     initialize_ble(esp_gap_cb);
     ESP_LOGI("BLE", "Configuring payload");
-    uint8_t hello_message[] = {
-        /*-- device name --*/
-        0x0b, // length of type and device name(11)
-        0x09, // device name type (1)
-        'S','p','e','e','d',' ','B','u','m','p', // Device name (10)
-        0x05, // length of custom data
-        0xff, // custom type
-        0x00,0x00,0x00,0x00
-    };
-
-    esp_ble_gap_config_adv_data_raw(hello_message, sizeof(hello_message));
+    advertise_idle();
 
 	initialize_wifi(wifi_ssid, wifi_pass, wifi_event_handler);
 	
@@ -303,5 +397,6 @@ void app_main(void)
 		mqtt_event_handler
 	);
 
-    xTaskCreate(&sensor_data_send_task, "sensor_data_task", 2048, NULL, 5, NULL);
+    xTaskCreate(&ultrasonic_sensor_data, "ultrasonic_sensor_data", 2048, NULL, 5, NULL);
+    xTaskCreate(&analyze_samples_send_over_mqtt, "analyze_samples_send_over_mqtt", 2048, NULL, 5, NULL);    
 }
