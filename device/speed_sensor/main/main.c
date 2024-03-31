@@ -30,12 +30,12 @@
 #include "esp_bt_main.h"
 #include "esp_bt_defs.h"
 
-// #include "driver/gpio.h"
 #include "esp_timer.h"
 
 #include <ultrasonic.h>
 #include <esp_err.h>
 
+#define MAX_SAMPLES 100
 
 char *MQTT_DEVICE_UPGRADE_TOPIC = "/device/upgrade";
 char *MQTT_BUMP_CONTROLLER_TOPIC = "/device/bump";
@@ -47,19 +47,6 @@ const char *mqtt_broker_user = CONFIG_MQTT_BROKER_USER;
 const char *mqtt_broker_pass = CONFIG_MQTT_BROKER_PASSWORD;
 static const char *MQTT_TAG = "MQTT";
 static const char *HTTP_TAG = "HTTP";
-
-// Set GPIOs for PIR Motion Sensors
-// #define MOTION_SENSOR1_PIN 27
-// #define MOTION_SENSOR2_PIN 26
-
-// Timer: Auxiliary variables
-// static unsigned long now;
-// static unsigned long lastTrigger1 = 0;
-// static unsigned long lastTrigger2 = 0;
-// static bool startTimer1 = false;
-// static bool startTimer2 = false;
-// static bool motion1 = false;
-// static bool motion2 = false;
 
 #define MAX_DISTANCE_CM 60 // 5m max
 #define SENSOR_DISTANCE_CM 10 // Distance between sensors in cm
@@ -73,62 +60,21 @@ static const char *HTTP_TAG = "HTTP";
 // Global MQTT client handle
 esp_mqtt_client_handle_t mqtt_client = NULL;
 
-typedef struct {
-    float speed; // Speed in km/h
-    float length; // Length in meters
-} car_readings;
+float speed_samples[MAX_SAMPLES];
+int sample_count = 0;
+bool sensor_1_up = true;
+bool sensor_2_up = true;
 
 
-// Interrupt service routine for motion sensor 1
-// static void IRAM_ATTR detectsMovement1() {
-//     startTimer1 = true;
-//     lastTrigger1 = esp_timer_get_time() / 1000;
-// }
-
-
-// // Interrupt service routine for motion sensor 2
-// static void IRAM_ATTR detectsMovement2() {
-//     startTimer2 = true;
-//     lastTrigger2 = esp_timer_get_time() / 1000;
-// }
-
-
-// static void setup_gpio() {
-//     gpio_config_t io_conf;
-//     // Configure motion sensor 1 GPIO
-//     io_conf.intr_type = GPIO_INTR_POSEDGE;
-//     io_conf.pin_bit_mask = (1ULL << MOTION_SENSOR1_PIN);
-//     io_conf.mode = GPIO_MODE_INPUT;
-//     io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
-//     gpio_config(&io_conf);
-
-//     // Configure motion sensor 2 GPIO
-//     io_conf.intr_type = GPIO_INTR_POSEDGE;
-//     io_conf.pin_bit_mask = (1ULL << MOTION_SENSOR2_PIN);
-//     io_conf.mode = GPIO_MODE_INPUT;
-//     io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
-//     gpio_config(&io_conf);
-
-//     // Install ISR service with default configuration
-//     gpio_install_isr_service(0);
-//     // Hook ISR handlers to corresponding GPIO pins
-//     gpio_isr_handler_add(MOTION_SENSOR1_PIN, detectsMovement1, (void *) MOTION_SENSOR1_PIN);
-//     gpio_isr_handler_add(MOTION_SENSOR2_PIN, detectsMovement2, (void *) MOTION_SENSOR2_PIN);
-// }
+void add_speed_sample(float speed) {
+    if (sample_count < MAX_SAMPLES) {
+        speed_samples[sample_count++] = speed;
+    }
+}
 
 
 float generate_random_float(float min, float max) {
     return min + ((float)rand() / RAND_MAX) * (max - min);
-}
-
-
-static car_readings random_sensor_readings() {
-	car_readings sample;
-
-	sample.speed = generate_random_float(0.0, 200.0);
-    sample.length = generate_random_float(3.0, 5.0);
-
-    return sample;
 }
 
 
@@ -227,18 +173,37 @@ void upgrade_firmware_task(void *pvParameters) {
 }
 
 
-void sensor_data_send_task(void *pvParameters) {
-    // sends dummy sensor data every 5 seconds
+void analyze_samples_send_over_mqtt() {
     while (true) {
-        // print_current_time();
-		car_readings current_sample = random_sensor_readings();
-		char* mqtt_message = malloc(100 * sizeof(char));
+        vTaskDelay(pdMS_TO_TICKS(5000)); // Wait for 5 seconds
 
-		sprintf(mqtt_message, "{\"device\": \"sensor_1\", \"data\": {\"speed\": \"%.2f\", \"length\": \"%.2f\"}}", current_sample.speed, current_sample.length);
+        float max_speed = 0;
+        float min_speed = 0;
+        float sum_speed = 0;
+        float average_speed = 0;
 
-		esp_mqtt_client_publish(mqtt_client, "/device/data", mqtt_message, 0, 0, true);
-		vTaskDelay(5000 /portTICK_PERIOD_MS);
-	}
+        if (sample_count > 0) {
+            max_speed = speed_samples[0];
+            min_speed = speed_samples[0];
+            sum_speed = 0;
+            for (int i = 0; i < sample_count; i++) {
+                if (speed_samples[i] > max_speed) max_speed = speed_samples[i];
+                if (speed_samples[i] < min_speed) min_speed = speed_samples[i];
+                sum_speed += speed_samples[i];
+            }
+            average_speed = sum_speed / sample_count;
+        }
+
+        char* mqtt_message = malloc(250 * sizeof(char));
+        sprintf(mqtt_message, "{\"device\": \"sensor_1\", \"data\": {\"avg_speed\": \"%.2f\", \"max_speed\": \"%.2f\", \"min_speed\": \"%.2f\", \"num_cars\": \"%d\", \"sensor_1_up\": \"%d\", \"sensor_2_up\": \"%d\"}}", average_speed, max_speed, min_speed, sample_count, sensor_1_up, sensor_2_up);
+        esp_mqtt_client_publish(mqtt_client, "/device/data", mqtt_message, 0, 0, true);
+        ESP_LOGI("ANALYZE", "Max Speed: %0.02f cm/s, Min Speed: %0.02f cm/s, Average Speed: %0.02f cm/s, Total Cars: %d", max_speed, min_speed, average_speed, sample_count);
+
+        // Reset the list
+        sample_count = 0;
+        sensor_1_up = true;
+        sensor_2_up = true;
+    }
 }
 
 
@@ -329,98 +294,8 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
     }
 }
 
-static void advertise_idle()
-{
-    uint8_t idle_message[] = {
-        /*-- device name --*/
-        0x0b, // length of type and device name(11)
-        0x09, // device name type (1)
-        'S','p','e','e','d',' ','B','u','m','p', // Device name (10)
-        0x05, // length of custom data
-        0xff, // custom type
-        0x00,0x00,0x00,0x00
-    };
-    esp_ble_gap_config_adv_data_raw(idle_message, sizeof(idle_message));
-    ESP_LOGI("BLE", "Advertise idle");
-}
 
-static void advertise_deploy_speed_bump()
-{
-    uint8_t deploy_message[] = {
-    /*-- device name --*/
-    0x0b, // length of type and device name(11)
-    0x09, // device name type (1)
-    'S','p','e','e','d',' ','B','u','m','p', // Device name (10)
-    0x05, // length of custom data
-    0xff, // custom type
-    0x00,0x00,0x00,0x01
-    };
-    esp_ble_gap_config_adv_data_raw(deploy_message, sizeof(deploy_message));
-    ESP_LOGI("BLE", "Advertise deploy");
-    vTaskDelay(2000 /portTICK_PERIOD_MS);
-    advertise_idle();
-}
-
-static void advertise_retract_speed_bump()
-{
-    uint8_t retract_message[] = {
-    /*-- device name --*/
-    0x0b, // length of type and device name(11)
-    0x09, // device name type (1)
-    'S','p','e','e','d',' ','B','u','m','p', // Device name (10)
-    0x05, // length of custom data
-    0xff, // custom type
-    0x00,0x00,0x00,0x02
-    };
-    esp_ble_gap_config_adv_data_raw(retract_message, sizeof(retract_message));
-    ESP_LOGI("BLE", "Advertise retract");
-    vTaskDelay(2000 /portTICK_PERIOD_MS);
-    advertise_idle();
-}
-
-
-// static void measure_speed(){
-    // // Current time
-    // now = esp_timer_get_time();
-
-    // // Sensor 1 motion detection handling
-    // if (!motion1 && startTimer1) {
-    //     // printf("Motion detected on sensor 1!!!\n");
-    //     motion1 = true;
-    // }
-    // // if (startTimer1 && (now - lastTrigger1 > TIME_SECONDS)) {
-    // // //     printf("Motion stopped on sensor 1...\n");
-    // //     startTimer1 = false;
-    // //     motion1 = false;
-    // // }
-
-    // // Sensor 2 motion detection handling
-    // if (!motion2 && startTimer2) {
-    //     // printf("Motion detected on sensor 2!!!\n");
-    //     motion2 = true;
-    // }
-    // // if (startTimer2 && (now - lastTrigger2 > TIME_SECONDS * 1000)) {
-    // // //     printf("Motion stopped on sensor 2...\n");
-    // //     startTimer2 = false;
-    // //     motion2 = false;
-    // // }
-
-    // // Calculate time between activations
-    // if (motion1 && motion2) {
-    //     unsigned long timeBetweenActivations = lastTrigger2 - lastTrigger1;
-    //     if (timeBetweenActivations < 4000000){
-    //         ESP_LOGI("TAG", "%lu", timeBetweenActivations);
-    //         advertise_deploy_speed_bump();
-    //     }
-    // }
-
-    // vTaskDelay(pdMS_TO_TICKS(1000)); // Delay for 1 second
-    // motion1 = false;
-    // motion2 = false;
-// }
-
-// void ultrasonic_test(void *pvParameters)
-void ultrasonic_test()
+void ultrasonic_sensor_data()
 {
     ultrasonic_sensor_t sensor1 = {
         .trigger_pin = TRIGGER_GPIO_1,
@@ -446,29 +321,37 @@ void ultrasonic_test()
         if (res1 != ESP_OK)
         {
             // printf("Error on Sensor 1: %d: ", res1);
+            sensor_1_up = false;
             // Handle errors for sensor 1
         }
         else if (distance1 * 100 < MAX_DISTANCE_CM)
         {
             start_time = xTaskGetTickCount();
-            // printf("Distance from Sensor 1: %0.04f cm\n", distance1 * 100);
+            printf("Distance from Sensor 1: %0.04f cm\n", distance1 * 100);
         }
 
         if (res2 != ESP_OK)
         {
-            printf("Error on Sensor 2: %d: ", res2);
+            // printf("Error on Sensor 2: %d: ", res2);
+            sensor_2_up = false;
             // Handle errors for sensor 2
+            // Dummy data
+            float chance = generate_random_float(0, 100);
+            if (chance < 10) {
+                add_speed_sample(generate_random_float(0.0, 200.0));
+            }
         }
         else if (distance2 * 100 < MAX_DISTANCE_CM)
         {
-            // printf("Distance from Sensor 2: %0.04f cm\n", distance2 * 100);
+            printf("Distance from Sensor 2: %0.04f cm\n", distance2 * 100);
             if (start_time != 0) // If the timer was started
             {
                 TickType_t end_time = xTaskGetTickCount(); // Get the current time
                 float time_taken = ((float)(end_time - start_time)) * portTICK_PERIOD_MS / 1000; // Calculate time taken in seconds
                 float speed = SENSOR_DISTANCE_CM / time_taken; // Calculate speed of passing car
-                // printf("Speed of passing car: %0.02f cm/s\n", speed);
+                printf("Speed of passing car: %0.02f cm/s\n", speed);
                 start_time = 0; // Reset the timer
+                add_speed_sample(speed);
                 if (speed > 50){
                     ESP_LOGI("TAG", "%s", "Too fast");
                     advertise_deploy_speed_bump();
@@ -482,12 +365,6 @@ void ultrasonic_test()
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
-
-// void app_main()
-// {
-//     xTaskCreate(ultrasonic_test, "ultrasonic_test", configMINIMAL_STACK_SIZE * 3, NULL, 5, NULL);
-// }
-
 
 
 void app_main(void)
@@ -503,26 +380,21 @@ void app_main(void)
     ESP_LOGI("BLE", "Configuring payload");
     advertise_idle();
 
-	// initialize_wifi(wifi_ssid, wifi_pass, wifi_event_handler);
+	initialize_wifi(wifi_ssid, wifi_pass, wifi_event_handler);
 	
-	// ESP_LOGI("MAIN", "5s delay to connect to Wifi.");
-	// vTaskDelay(5000 /portTICK_PERIOD_MS);
+	ESP_LOGI("MAIN", "5s delay to connect to Wifi.");
+	vTaskDelay(5000 /portTICK_PERIOD_MS);
 
-    // initialize_sntp();
-    // wait_for_time_sync();
+    initialize_sntp();
+    wait_for_time_sync();
 	
-	// mqtt_client = initialize_mqtt(
-	// 	mqtt_broker_uri,
-	// 	mqtt_broker_user,
-	// 	mqtt_broker_pass,
-	// 	mqtt_event_handler
-	// );
+	mqtt_client = initialize_mqtt(
+		mqtt_broker_uri,
+		mqtt_broker_user,
+		mqtt_broker_pass,
+		mqtt_event_handler
+	);
 
-    // xTaskCreate(&sensor_data_send_task, "sensor_data_task", 2048, NULL, 5, NULL);
-
-    // setup_gpio();
-
-    while (1) {
-        ultrasonic_test();
-    }
+    xTaskCreate(&ultrasonic_sensor_data, "ultrasonic_sensor_data", 2048, NULL, 5, NULL);
+    xTaskCreate(&analyze_samples_send_over_mqtt, "analyze_samples_send_over_mqtt", 2048, NULL, 5, NULL);    
 }

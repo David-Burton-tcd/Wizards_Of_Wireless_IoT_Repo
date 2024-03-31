@@ -29,3 +29,12 @@ void print_current_time();
 
 
 void initialize_ble(esp_gap_ble_cb_t esp_gap_cb);
+
+
+void advertise_idle();
+
+
+void advertise_deploy_speed_bump();
+
+
+void advertise_retract_speed_bump();
