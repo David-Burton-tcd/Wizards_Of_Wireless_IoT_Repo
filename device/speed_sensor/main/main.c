@@ -37,11 +37,14 @@
 
 #define MAX_SAMPLES 100
 
+char *device_firmware_version = CONFIG_DEVICE_FIRMWARE_VERSION;
+
 char *MQTT_DEVICE_UPGRADE_TOPIC = "/device/upgrade";
 char *MQTT_BUMP_CONTROLLER_TOPIC = "/device/bump";
 const char *wifi_ssid = CONFIG_WIFI_SSID;
 const char *wifi_pass = CONFIG_WIFI_PASSWORD;
 const char *firmware_url = CONFIG_FIRMWARE_UPGRADE_URL;
+char* firmware_binary = NULL;
 const char *mqtt_broker_uri = CONFIG_MQTT_BROKER_URI;
 const char *mqtt_broker_user = CONFIG_MQTT_BROKER_USER;
 const char *mqtt_broker_pass = CONFIG_MQTT_BROKER_PASSWORD;
@@ -149,8 +152,11 @@ esp_err_t http_event_handler(esp_http_client_event_t *evt)
 void upgrade_firmware_task(void *pvParameters) {
     ESP_LOGI("UPGRADE", "Starting OTA Upgrade task");
 
+    char* firmware_complete_url = malloc(150 * sizeof(char));
+    snprintf(firmware_complete_url, 100, "%s/%s", firmware_url, firmware_binary);
+
     esp_http_client_config_t config = {
-        .url = firmware_url,
+        .url = firmware_complete_url,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .event_handler = http_event_handler,
         .keep_alive_enable = true,
@@ -165,9 +171,13 @@ void upgrade_firmware_task(void *pvParameters) {
     esp_err_t ret = esp_https_ota(&ota_config);
     if (ret == ESP_OK) {
         ESP_LOGI("UPGRADE", "OTA Succeed, Rebooting...");
+        free(firmware_complete_url);
         esp_restart();
     } else {
         ESP_LOGE("UPGRADE", "Firmware upgrade failed");
+        free(firmware_complete_url);
+        free(firmware_binary);
+        firmware_binary = NULL;
 		vTaskDelete(NULL);
     }
 }
@@ -195,9 +205,10 @@ void analyze_samples_send_over_mqtt() {
         }
 
         char* mqtt_message = malloc(250 * sizeof(char));
-        sprintf(mqtt_message, "{\"device\": \"sensor_1\", \"data\": {\"avg_speed\": \"%.2f\", \"max_speed\": \"%.2f\", \"min_speed\": \"%.2f\", \"num_cars\": \"%d\", \"sensor_1_up\": \"%d\", \"sensor_2_up\": \"%d\"}}", average_speed, max_speed, min_speed, sample_count, sensor_1_up, sensor_2_up);
+        sprintf(mqtt_message, "{\"device\": \"sensor_1\", \"version\": \"%s\", \"data\": {\"avg_speed\": \"%.2f\", \"max_speed\": \"%.2f\", \"min_speed\": \"%.2f\", \"num_cars\": \"%d\", \"sensor_1_up\": \"%d\", \"sensor_2_up\": \"%d\"}}", device_firmware_version, average_speed, max_speed, min_speed, sample_count, sensor_1_up, sensor_2_up);
         esp_mqtt_client_publish(mqtt_client, "/device/data", mqtt_message, 0, 0, true);
-        ESP_LOGI("ANALYZE", "Max Speed: %0.02f cm/s, Min Speed: %0.02f cm/s, Average Speed: %0.02f cm/s, Total Cars: %d", max_speed, min_speed, average_speed, sample_count);
+        // ESP_LOGI("ANALYZE", "Max Speed: %0.02f cm/s, Min Speed: %0.02f cm/s, Average Speed: %0.02f cm/s, Total Cars: %d", max_speed, min_speed, average_speed, sample_count);
+        free(mqtt_message);
 
         // Reset the list
         sample_count = 0;
@@ -239,9 +250,22 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         ESP_LOGI(MQTT_TAG, "MQTT_EVENT_DATA");
         printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
         printf("DATA=%.*s\r\n", event->data_len, event->data);
+        
+        // handle device bump deploy topic
+        if (strncmp(event->topic, MQTT_BUMP_CONTROLLER_TOPIC, event->topic_len) == 0) {
+            if (strncmp(event->data, "deploy", event->data_len) == 0){
+                advertise_deploy_speed_bump();
+            }
+            else if (strncmp(event->data, "retract", event->data_len) == 0){
+                advertise_retract_speed_bump();
+            }
+        }
 
 		// handle device upgrade topic
-		if (strcmp(event->topic, MQTT_DEVICE_UPGRADE_TOPIC)) {
+		if (strncmp(event->topic, MQTT_DEVICE_UPGRADE_TOPIC, event->topic_len) == 0) {
+            firmware_binary = malloc(event->data_len + 1);
+            memcpy(firmware_binary, event->data, event->data_len);
+            firmware_binary[event->data_len] = '\0';
 			xTaskCreate(&upgrade_firmware_task, "upgrade_firmware", 8192, NULL, 5, NULL);
 		}
 
