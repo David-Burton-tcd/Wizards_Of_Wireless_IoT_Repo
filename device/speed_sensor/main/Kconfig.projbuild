@@ -1,5 +1,11 @@
 menu "Speed Sensor Configuration"
 
+config DEVICE_FIRMWARE_VERSION
+    string "Firmware version"
+    default "0.0.1"
+    help
+        Firmware version.
+
 config WIFI_SSID
     string "WiFi network SSID"
     default ""
@@ -14,7 +20,7 @@ config WIFI_PASSWORD
 
 config FIRMWARE_UPGRADE_URL
     string "Fimware upgrade HTTPS url"
-    default "https://34.89.91.208:8443/hello-world.bin"
+    default "https://34.89.91.208:8443"
     help
         Fimware upgrade HTTPS url.
 
