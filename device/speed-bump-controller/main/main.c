@@ -15,7 +15,7 @@
 #include "freertos/task.h"
 #include "driver/mcpwm_prelude.h"
 #include <semaphore.h> 
-#include "esp_time.h"
+#include "esp_timer.h"
 
 
 #define SERVO_MIN_PULSEWIDTH_US 500  // Minimum pulse width in microsecond
@@ -72,6 +72,7 @@ static void deactivate_speed_bump(bool isBySignal)
 }
 
 static void deactivate_speed_bump_automatic() {
+    vTaskDelay(pdMS_TO_TICKS(10000));
     deactivate_speed_bump(false);
 }
 
@@ -91,7 +92,7 @@ static void activate_speed_bump()
         is_deployed = true;
         xTaskCreate(&deactivate_speed_bump_automatic, "undeploy_speed_bump_task", 2048, NULL, 5, NULL);
     }
-    last_bump_change = xTaskGetIntCount();
+    last_bump_change = xTaskGetTickCount();
 }
 
 static void setup_servo() 
